@@ -2,6 +2,7 @@ import chess
 import random
 import pygame
 import sys
+import os
 import importlib.util
 import tkinter as tk
 from tkinter import filedialog
@@ -83,8 +84,83 @@ class ChessApp:
 
         # Fonts — fall back gracefully on systems without the emoji font
         self._load_fonts()
+        # Bot defaults — keep across resets so a loaded bot isn't cleared
+        self.bot = None
+        self.bot_name = "Da Beginner Bot"
 
         self.reset()
+
+    def start_prompt(self):
+        # Simple start screen with a "Start Game" button
+        while True:
+            self.screen.fill((20, 20, 20, 128))
+            new_game_btn = self._draw_button("Start New Game", WIN_WIDTH//2 - 80, WIN_HEIGHT//2 - 40)
+            make_position_btn = self._draw_button("Make Position", WIN_WIDTH//2 - 80, WIN_HEIGHT//2 + 40)
+            pygame.display.flip()
+
+            # Check for button clicks
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if new_game_btn.collidepoint(event.pos):
+                        # Handle "Start New Game" button click
+                        self.color_prompt()
+                        self.board = chess.Board()
+                        
+                    if make_position_btn.collidepoint(event.pos):
+                        # Handle "Make Position" button click
+                        self.create_position()
+                    
+                    self.choose_bot_prompt()
+                    return
+
+    def color_prompt(self):
+        # Prompt the user to choose a color (white or black)
+        while True:
+            self.screen.fill((20, 20, 20, 128))
+            white_btn = self._draw_button("Play as White", WIN_WIDTH//2 - 100, WIN_HEIGHT//2 - 60)
+            black_btn = self._draw_button("Play as Black", WIN_WIDTH//2 - 100, WIN_HEIGHT//2)
+            random_btn = self._draw_button("Random Color", WIN_WIDTH//2 - 100, WIN_HEIGHT//2 + 60)
+            pygame.display.flip()
+
+            # Check for button clicks
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if white_btn.collidepoint(event.pos):
+                        self.player_color = chess.WHITE
+                        return
+                    if black_btn.collidepoint(event.pos):
+                        self.player_color = chess.BLACK
+                        return
+                    if random_btn.collidepoint(event.pos):
+                        self.player_color = random.choice([chess.WHITE, chess.BLACK])
+                        return
+                    
+    def choose_bot_prompt(self):
+        # Prompt the user to choose a bot file
+        while True:
+            self.screen.fill((20, 20, 20))
+            load_bot_btn = self._draw_button("Load Bot", WIN_WIDTH//2 - 80, WIN_HEIGHT//2 - 20)
+            pygame.display.flip()
+
+            # Check for button clicks
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if load_bot_btn.collidepoint(event.pos):
+                        self.load_bot()
+                        return
+                    
+    def create_position(self):
+        # Allow the user to set up a custom position by clicking squares to cycle through pieces
+        pass
 
     def _load_fonts(self):
         # Try to find a font that renders chess unicode symbols
@@ -110,19 +186,16 @@ class ChessApp:
         self.status_font  = pygame.font.SysFont("segoeui,helvetica,arial", 15, bold=True)
 
     def reset(self):
-        self.board        = chess.Board()
+        self.start_prompt()
         self.selected_sq  = None
         self.legal_targets= set()
         self.last_move    = None
         self.move_history = []   # list of SAN strings
         self.scroll_offset= 0
-        self.game_over    = False
-        self.status_msg   = "Your turn  (White)"
-        self.player_color = chess.WHITE
+        self.game_over    = self.board.is_game_over()
+        self.status_msg   = "Let the game begin!"
         self.flipped      = False
-        self.bot_delay    = 0    # ms countdown before bot moves
-        self.bot      = None   # add these two lines
-        self.bot_name = "Random (default)"
+        self.bot_delay    = 10    # ms countdown before bot moves
 
     # -- Drawing --------------------------------------------------------------
     def draw_board(self):
@@ -353,7 +426,7 @@ class ChessApp:
         )
         root.destroy()
     
-        if not sys.path:
+        if not path:
             return  # user cancelled
 
         try:
@@ -366,7 +439,7 @@ class ChessApp:
                 return
 
             self.bot        = module
-            self.bot_name   = path.split("/")[-1].replace(".py", "")
+            self.bot_name   = os.path.basename(path).replace(".py", "")
             self.status_msg = f"Bot loaded: {self.bot_name}"
         except Exception as e:
             self.status_msg = f"Load error: {e}"
@@ -374,25 +447,29 @@ class ChessApp:
     def bot_play(self):
         if self.game_over or self.board.turn == self.player_color:
             return
+        # Ask bot (if loaded) or pick a random legal move
         if self.bot is not None:
-            move = self.bot.get_move(self.board)
+            try:
+                move = self.bot.get_move(self.board)
+            except Exception as e:
+                self.status_msg = f"Bot error: {e}"
+                self._end_game()
+                return
         else:
             moves = list(self.board.legal_moves)
-            move  = random.choice(moves) if moves else None
+            move = random.choice(moves) if moves else None
+
         if move is None:
             self._end_game()
             return
-        if self.game_over or self.board.turn == self.player_color:
-            return
-        moves = list(self.board.legal_moves)
-        if not moves:
+
+        # Ensure the move is legal for the current position
+        if move not in self.board.legal_moves:
+            self.status_msg = "Bot returned illegal move"
             self._end_game()
             return
-        move = self.bot.get_move(self.board)
-        if move is None:
-            self._end_game()
-            return
-        san  = self.board.san(move)
+
+        san = self.board.san(move)
         self.board.push(move)
         self.last_move = move
         self.move_history.append(san)
