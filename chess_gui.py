@@ -1,3 +1,5 @@
+from turtle import color
+
 import chess
 import random
 import pygame
@@ -91,8 +93,10 @@ class ChessApp:
         self.reset()
 
     def start_prompt(self):
-        # Simple start screen with a "Start Game" button
+        # Prompt the user to choose a color and start the game
+        self.color_prompt()
         while True:
+            # Draw the start screen
             self.screen.fill((20, 20, 20, 128))
             new_game_btn = self._draw_button("Start New Game", WIN_WIDTH//2 - 80, WIN_HEIGHT//2 - 40)
             make_position_btn = self._draw_button("Make Position", WIN_WIDTH//2 - 80, WIN_HEIGHT//2 + 40)
@@ -106,19 +110,19 @@ class ChessApp:
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     if new_game_btn.collidepoint(event.pos):
                         # Handle "Start New Game" button click
-                        self.color_prompt()
                         self.board = chess.Board()
-                        
                     if make_position_btn.collidepoint(event.pos):
                         # Handle "Make Position" button click
-                        self.create_position()
+                        self.board = chess.Board(None)
+                        self.enter_edit_mode()
                     
                     self.choose_bot_prompt()
                     return
 
     def color_prompt(self):
-        # Prompt the user to choose a color (white or black)
+        # Prompt the user to choose a color (white, black or random)
         while True:
+            # Draw the color selection screen
             self.screen.fill((20, 20, 20, 128))
             white_btn = self._draw_button("Play as White", WIN_WIDTH//2 - 100, WIN_HEIGHT//2 - 60)
             black_btn = self._draw_button("Play as Black", WIN_WIDTH//2 - 100, WIN_HEIGHT//2)
@@ -133,12 +137,18 @@ class ChessApp:
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     if white_btn.collidepoint(event.pos):
                         self.player_color = chess.WHITE
+                        self.status_msg = "Playing as White"
                         return
                     if black_btn.collidepoint(event.pos):
                         self.player_color = chess.BLACK
+                        self.status_msg = "Playing as Black"
                         return
                     if random_btn.collidepoint(event.pos):
                         self.player_color = random.choice([chess.WHITE, chess.BLACK])
+                        if self.player_color == chess.WHITE:
+                            self.status_msg = "Playing as White"
+                        else:
+                            self.status_msg = "Playing as Black"
                         return
                     
     def choose_bot_prompt(self):
@@ -157,10 +167,11 @@ class ChessApp:
                     if load_bot_btn.collidepoint(event.pos):
                         self.load_bot()
                         return
-                    
-    def create_position(self):
-        # Allow the user to set up a custom position by clicking squares to cycle through pieces
-        pass
+
+    def place_piece(board: chess.Board, square: str, piece_type: int, color: bool):
+        # Place a piece on a square.
+        sq = chess.parse_square(square)
+        board.set_piece_at(sq, chess.Piece(piece_type, color))
 
     def _load_fonts(self):
         # Try to find a font that renders chess unicode symbols
@@ -193,9 +204,12 @@ class ChessApp:
         self.move_history = []   # list of SAN strings
         self.scroll_offset= 0
         self.game_over    = self.board.is_game_over()
-        self.status_msg   = "Let the game begin!"
         self.flipped      = False
         self.bot_delay    = 10    # ms countdown before bot moves
+
+        # Edit mode state
+        self.edit_mode      = False
+        self.edit_selection = None   # (piece_type, color) or "EMPTY" or None
 
     # -- Drawing --------------------------------------------------------------
     def draw_board(self):
@@ -291,7 +305,7 @@ class ChessApp:
                          (px, 0, PANEL_WIDTH, WIN_HEIGHT))
 
         # Title
-        t = self.heading_font.render("Chess vs Random Bot", True, ACCENT)
+        t = self.heading_font.render("Chess vs Beginner's Luck", True, ACCENT)
         self.screen.blit(t, (px + 12, 14))
 
         # Status
@@ -299,18 +313,31 @@ class ChessApp:
                          (px + 8, 40, PANEL_WIDTH - 16, 32), border_radius=6)
         s = self.status_font.render(self.status_msg, True, TEXT_WHITE)
         self.screen.blit(s, (px + 12, 47))
+        if self.edit_mode:
+            self._draw_edit_palette(px)
+        else:
+            self._draw_move_history(px)
 
+        # Buttons
+        self.btn_new  = self._draw_button("New Game",   px + 8,  WIN_HEIGHT - 46)
+        self.btn_flip = self._draw_button("Flip Board", px + 8,  WIN_HEIGHT - 86)
+        self.btn_load = self._draw_button("Load Bot", px + 8, WIN_HEIGHT - 166)
+        edit_label = "Done Editing" if self.edit_mode else "Edit Board"
+        self.btn_edit = self._draw_button(edit_label, px + 8, WIN_HEIGHT - 126,
+                                          active=self.edit_mode)
+        
+    def _draw_move_history(self, px):
         # Move history label
         h = self.heading_font.render("Move History", True, TEXT_GRAY)
         self.screen.blit(h, (px + 12, 84))
-
+ 
         # Move history box
         box_y = 108
-        box_h = WIN_HEIGHT - box_y - 110
+        box_h = WIN_HEIGHT - box_y - 180
         pygame.draw.rect(self.screen, PANEL_LIGHT,
                          (px + 8, box_y, PANEL_WIDTH - 16, box_h),
                          border_radius=6)
-
+ 
         # Render move pairs
         line_h = 18
         visible = box_h // line_h
@@ -319,11 +346,11 @@ class ChessApp:
             w = self.move_history[i]
             b = self.move_history[i + 1] if i + 1 < len(self.move_history) else ""
             pairs.append(f"{i//2+1:>3}. {w:<8} {b}")
-
+ 
         max_scroll = max(0, len(pairs) - visible)
         self.scroll_offset = min(self.scroll_offset, max_scroll)
         visible_pairs = pairs[self.scroll_offset: self.scroll_offset + visible]
-
+ 
         # Clip to box
         clip = pygame.Rect(px + 8, box_y, PANEL_WIDTH - 16, box_h)
         self.screen.set_clip(clip)
@@ -332,7 +359,7 @@ class ChessApp:
             t = self.move_font.render(line, True, c)
             self.screen.blit(t, (px + 12, box_y + i * line_h + 4))
         self.screen.set_clip(None)
-
+ 
         # Scrollbar
         if len(pairs) > visible:
             sb_x = px + PANEL_WIDTH - 14
@@ -343,17 +370,82 @@ class ChessApp:
                              (sb_x, box_y, 6, sb_h), border_radius=3)
             pygame.draw.rect(self.screen, ACCENT,
                              (sb_x, thumb_y, 6, thumb_h), border_radius=3)
+            
+    def _draw_edit_palette(self, px):
+        """Piece palette shown while in edit mode. Click a piece, then click
+        a board square to place it. Click the eraser to clear squares."""
+        h = self.heading_font.render("Select a Piece", True, TEXT_GRAY)
+        self.screen.blit(h, (px + 12, 84))
+ 
+        piece_order = [chess.KING, chess.QUEEN, chess.ROOK,
+                       chess.BISHOP, chess.KNIGHT, chess.PAWN]
+ 
+        cell = 50
+        gap  = 8
+        start_y = 110
+        self.palette_rects = {}  # selection_key -> rect
+ 
+        for col_i, color in enumerate((chess.WHITE, chess.BLACK)):
+            col_x = px + 16 + col_i * (cell + gap)
+            label = "White" if color == chess.WHITE else "Black"
+            lbl = self.label_font.render(label, True, TEXT_GRAY)
+            self.screen.blit(lbl, (col_x, start_y - 18))
+ 
+            for row_i, piece_type in enumerate(piece_order):
+                y = start_y + row_i * (cell + gap)
+                rect = pygame.Rect(col_x, y, cell, cell)
+ 
+                key = (piece_type, color)
+                selected = self.edit_selection == key
+                bg = ACCENT if selected else PANEL_LIGHT
+                pygame.draw.rect(self.screen, bg, rect, border_radius=8)
+                if selected:
+                    pygame.draw.rect(self.screen, (255, 255, 255), rect,
+                                     width=2, border_radius=8)
+ 
+                sym = PIECE_SYMBOLS[(piece_type, color)]
+                fcolor = (255, 255, 255) if color == chess.WHITE else (25, 25, 25)
+                surf = self.piece_font.render(sym, True, fcolor)
+                # scale font down a touch for the smaller cell if needed
+                r = surf.get_rect(center=rect.center)
+                self.screen.blit(surf, r)
+ 
+                self.palette_rects[key] = rect
+ 
+        # Eraser button
+        eraser_y = start_y + len(piece_order) * (cell + gap) + 6
+        eraser_rect = pygame.Rect(px + 16, eraser_y, 2 * cell + gap, 38)
+        selected = self.edit_selection == "EMPTY"
+        bg = ACCENT if selected else PANEL_LIGHT
+        pygame.draw.rect(self.screen, bg, eraser_rect, border_radius=8)
+        if selected:
+            pygame.draw.rect(self.screen, (255, 255, 255), eraser_rect,
+                             width=2, border_radius=8)
+        lbl = self.btn_font.render("Erase (empty square)", True, BTN_TEXT)
+        self.screen.blit(lbl, lbl.get_rect(center=eraser_rect.center))
+        self.palette_rects["EMPTY"] = eraser_rect
+ 
+        # Clear board / Start position quick actions
+        actions_y = eraser_y + 50
+        self.btn_clear_board = self._draw_button("Clear Board", px + 8, actions_y)
+        self.btn_start_pos   = self._draw_button("Starting Position", px + 8, actions_y + 40)
+ 
+        # Side-to-move toggle
+        turn_y = actions_y + 88
+        turn_label = "Side to move: White" if self.board.turn == chess.WHITE \
+                    else "Side to move: Black"
+        self.btn_turn = self._draw_button(turn_label, px + 8, turn_y)
 
-        # Buttons
-        self.btn_new  = self._draw_button("New Game",   px + 8,  WIN_HEIGHT - 96)
-        self.btn_flip = self._draw_button("Flip Board", px + 8,  WIN_HEIGHT - 56)
-        self.btn_load = self._draw_button("Load Bot", px + 8, WIN_HEIGHT - 136)
-
-    def _draw_button(self, label, x, y):
+    def _draw_button(self, label, x, y, active=False):
+        # Draw a button with the given label at the specified position.
         w, h = PANEL_WIDTH - 16, 34
         rect = pygame.Rect(x, y, w, h)
         mouse = pygame.mouse.get_pos()
         hover = rect.collidepoint(mouse)
+        if active:
+            bg = ACCENT
+        else:
+            bg = BTN_HOVER if hover else BTN_BG
         pygame.draw.rect(self.screen, BTN_HOVER if hover else BTN_BG, rect, border_radius=7)
         t = self.btn_font.render(label, True, BTN_TEXT)
         self.screen.blit(t, t.get_rect(center=rect.center))
@@ -367,6 +459,10 @@ class ChessApp:
 
         sq = px_to_square(x, y, self.flipped)
         if sq is None:
+            return
+        
+        if self.edit_mode:
+            self.handle_edit_click(sq)
             return
 
         if self.game_over or self.board.turn != self.player_color:
@@ -389,6 +485,90 @@ class ChessApp:
             else:
                 self.selected_sq   = None
                 self.legal_targets = set()
+
+    def handle_edit_click(self, sq):
+        """Place or clear the currently selected palette piece on a square."""
+        if self.edit_selection is None:
+            return
+        if self.edit_selection == "EMPTY":
+            self.board.remove_piece_at(sq)
+        else:
+            piece_type, color = self.edit_selection
+            self.board.set_piece_at(sq, chess.Piece(piece_type, color))
+
+    def handle_palette_click(self, pos):
+        """Handle clicks on the piece palette / quick action buttons in edit mode."""
+        for key, rect in getattr(self, "palette_rects", {}).items():
+            if rect.collidepoint(pos):
+                self.edit_selection = key
+                return
+ 
+        if hasattr(self, "btn_clear_board") and self.btn_clear_board.collidepoint(pos):
+            self.board.clear()  # empty board, keeps turn/castling defaults reset
+            self.status_msg = "Board cleared"
+            return
+ 
+        if hasattr(self, "btn_start_pos") and self.btn_start_pos.collidepoint(pos):
+            self.board.reset()
+            self.status_msg = "Starting position loaded"
+            return
+ 
+        if hasattr(self, "btn_turn") and self.btn_turn.collidepoint(pos):
+            self.board.turn = not self.board.turn
+            return
+        
+    def enter_edit_mode(self):
+        self.edit_mode      = True
+        self.edit_selection = (chess.PAWN, chess.WHITE)
+        self.selected_sq    = None
+        self.legal_targets  = set()
+        self.status_msg     = "Editing: click a piece, then a square"
+ 
+    def exit_edit_mode(self):
+        self.edit_mode      = False
+        self.edit_selection = None
+ 
+        if not self.board.is_valid():
+            # Keep editing but warn — most common cause: missing/duplicate kings
+            self.status_msg = f"Invalid position: {self.board.status().name} — still editing"
+            self.edit_mode  = True
+            return
+ 
+        self.game_over   = False
+        self.last_move   = None
+        self.move_history = []
+        self.scroll_offset = 0
+        turn_str = "White" if self.board.turn == self.player_color else "Bot"
+        self.status_msg  = "Your turn  (White)" if self.board.turn == chess.WHITE \
+                           else "Your turn  (Black)"
+ 
+        self.pick_turn()
+        if self.board.turn != self.player_color:
+            self.status_msg = "Bot thinking…"
+            self.bot_delay  = 400
+
+    def pick_turn(self):
+        # Prompt user to choose which color's turn it is
+        while True:
+            # Draw the turn selection screen
+            self.screen.fill((20, 20, 20, 64))
+            white_btn = self._draw_button("White's Turn", WIN_WIDTH//2 - 100, WIN_HEIGHT//2 - 60)
+            black_btn = self._draw_button("Black's Turn", WIN_WIDTH//2 - 100, WIN_HEIGHT//2)
+
+            pygame.display.flip()
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    pos = pygame.mouse.get_pos()
+                    if white_btn.collidepoint(pos):
+                        self.board.turn = chess.WHITE
+                        return
+                    if black_btn.collidepoint(pos):
+                        self.board.turn = chess.BLACK
+                        return
 
     def _make_player_move(self, from_sq, to_sq):
         # Handle promotion — auto-queen for simplicity
@@ -514,6 +694,13 @@ class ChessApp:
                             self.flipped = not self.flipped
                         elif hasattr(self, "btn_load") and self.btn_load.collidepoint(event.pos):
                             self.load_bot()
+                        elif hasattr(self, "btn_edit") and self.btn_edit.collidepoint(event.pos):
+                            if self.edit_mode:
+                                self.exit_edit_mode()
+                            else:
+                                self.enter_edit_mode()
+                        elif self.edit_mode and event.pos[0] >= BOARD_SIZE:
+                            self.handle_palette_click(event.pos)
                         else:
                             self.handle_click(event.pos)
 
@@ -521,7 +708,7 @@ class ChessApp:
                     self.scroll_offset = max(0, self.scroll_offset - event.y)
 
             # Bot move after delay
-            if not self.game_over and self.bot_delay > 0:
+            if not self.edit_mode and not self.game_over and self.bot_delay > 0:
                 self.bot_delay -= dt
                 if self.bot_delay <= 0:
                     self.bot_delay = 0
