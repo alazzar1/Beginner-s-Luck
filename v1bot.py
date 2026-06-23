@@ -2,7 +2,7 @@
 import chess
 import random
 
-# Constants
+# -- Constants ------------------------------------------------------------------
 PIECE_VALUES = {
         chess.PAWN: 1,
         chess.KNIGHT: 3,
@@ -11,29 +11,31 @@ PIECE_VALUES = {
         chess.QUEEN: 9,
         chess.KING: 0
     }
+# Constants for TT flags
+EXACT = 0
+LOWER_BOUND = 1  # beta cutoff (score is at least this good for the side to move)
+UPPER_BOUND = 2  # failed low (score is at most this good)
 
-# Global variables
+# -- Global Variables ------------------------------------------------------------------
 transposition_table = {}
 
+# -- Main Functions ------------------------------------------------------------------
 def get_move(board: chess.Board) -> chess.Move:
     #Find the best move to take based on a simple material evaluation
     max_depth = 6  # Look <max_depth> plies ahead
     if is_endgame(board):
         max_depth = 8  # Look deeper in endgame
     best_move = None
-    best_moves = []
     
     # Evaluate each legal move using minimax and choose the best one
     for depth in range(1, max_depth + 1):
-        best_moves = get_move_at_depth(board, depth, hint=best_move)
-        best_move = random.choice(best_moves) if best_moves else None
+        best_move = get_move_at_depth(board, depth, hint=best_move)
             
-    return random.choice(best_moves) if best_moves else None
+    return best_move
 
 def get_move_at_depth(board: chess.Board, depth: int, hint: chess.Move = None) -> chess.Move:
     # Get the best move at a specific depth
     best_move = None
-    best_moves = []
     best_value = float('-inf') if board.turn == chess.WHITE else float('inf')
     alpha = float('-inf')
     beta = float('inf')
@@ -52,20 +54,15 @@ def get_move_at_depth(board: chess.Board, depth: int, hint: chess.Move = None) -
             if value > best_value:
                 best_value = value
                 best_move = move
-                best_moves = [move]
-            elif value == best_value:
-                best_moves.append(move)
-            alpha = max(alpha, value)
+            alpha = max(alpha, best_value)
         else:
             if value < best_value:
                 best_value = value
                 best_move = move
-                best_moves = [move]
-            elif value == best_value:
-                best_moves.append(move)
-            beta = min(beta, value)
-    return best_moves
+            beta = min(beta, best_value)
+    return best_move
 
+# -- Helper Functions ------------------------------------------------------------------
 def get_difference(board: chess.Board) -> int:
     #Simple material evaluation: +1 for each white piece, -1 for each black piece
     value = 0
@@ -76,45 +73,113 @@ def get_difference(board: chess.Board) -> int:
 
 def minimax(board: chess.Board, depth: int, alpha: int, beta: int) -> int:
     # Minimax algorithm to evaluate the position after <depth> moves
+    alpha_orig = alpha  # Save original alpha to determine flag at the end
+    beta_orig = beta  # Save original beta to determine flag at the end
+
+    # Transposition table lookup
     board_key = (board._transposition_key(), depth)
     if board_key in transposition_table:
-        return transposition_table[board_key]
+        score, flag = transposition_table[board_key]
+        if flag == EXACT:
+            return score
+        elif flag == LOWER_BOUND:
+            alpha = max(alpha, score)
+        elif flag == UPPER_BOUND:
+            beta = min(beta, score)
+        if alpha >= beta:
+            return score
 
     # Base case: if depth is 0 or gameover, return the material difference
     if depth == 0:
-        return get_difference(board)
+        return quiescence(board, alpha, beta)
     elif not any(board.legal_moves):
         return result_eval(board)
+    elif board.is_repetition(3):
+        return 0
 
     ordered_moves = order_moves(board)
 
     if board.turn == chess.WHITE:
         # Maximizing player (white)
         max_eval = float('-inf')
+        # Evaluate each move and update the maximum evaluation
         for move in ordered_moves:
             board.push(move)
             eval = minimax(board, depth - 1, alpha, beta)
             board.pop()
             max_eval = max(max_eval, eval)
-            alpha = max(alpha, eval)
+            alpha = max(alpha, max_eval)
             if beta <= alpha:
                 break
-        transposition_table[board_key] = max_eval
+
+        # Determine and store flag
+        if max_eval <= alpha_orig:
+            flag = UPPER_BOUND
+        elif max_eval >= beta:
+            flag = LOWER_BOUND
+        else:
+            flag = EXACT
+        transposition_table[board_key] = (max_eval, flag)
         return max_eval
     else:
         # Minimizing player (black)
         min_eval = float('inf')
+        # Evaluate each move and update the minimum evaluation
         for move in ordered_moves:
             board.push(move)
             eval = minimax(board, depth - 1, alpha, beta)
             board.pop()
             min_eval = min(min_eval, eval)
-            beta = min(beta, eval)
+            beta = min(beta, min_eval)
             if alpha >= beta:
                 break
-        transposition_table[board_key] = min_eval
+        
+        # Determine and store flag
+        if min_eval >= beta_orig:
+            flag = UPPER_BOUND
+        elif min_eval <= alpha_orig:
+            flag = LOWER_BOUND
+        else:
+            flag = EXACT
+        transposition_table[board_key] = (min_eval, flag)
         return min_eval
     
+def quiescence(board, alpha, beta):
+    # Quiescence search to avoid horizon effect
+    stand_pat = get_difference(board)
+    
+    # Search for captures to avoid horizon effect
+    if board.turn == chess.WHITE:
+        # If the stand-pat is already better than beta, return beta
+        if stand_pat >= beta:
+            return beta
+        alpha = max(alpha, stand_pat)
+        # Evaluate each capture and update the alpha value
+        for move in board.legal_moves:
+            if board.is_capture(move):
+                board.push(move)
+                score = quiescence(board, alpha, beta)
+                board.pop()
+                if score >= beta:
+                    return beta
+                alpha = max(alpha, score)
+        return alpha
+    else:
+        # If the stand-pat is already worse than alpha, return alpha
+        if stand_pat <= alpha:
+            return alpha
+        beta = min(beta, stand_pat)
+        # Evaluate each capture and update the beta value
+        for move in board.legal_moves:
+            if board.is_capture(move):
+                board.push(move)
+                score = quiescence(board, alpha, beta)
+                board.pop()
+                if score <= alpha:
+                    return alpha
+                beta = min(beta, score)
+        return beta
+
 def order_moves(board, killer_moves=None):
     # Order moves to improve alpha-beta pruning efficiency: captures first, then others
     def priority(move):
@@ -154,7 +219,7 @@ def result_eval(board: chess.Board) -> int:
     # Evaluate the result of the game (checkmate or stalemate)
     if board.is_checkmate():
         return float('inf') if board.turn == chess.BLACK else -float('inf')
-    if board.is_stalemate() or board.is_repetition(3):
+    if board.is_stalemate():
         return 0
     return get_difference(board)
 

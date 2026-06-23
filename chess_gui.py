@@ -674,7 +674,7 @@ class ChessApp:
             move = random.choice(moves) if moves else None
 
         if move is None:
-            self._end_game()
+            self.load_bot()
             return
 
         # Ensure the move is legal for the current position
@@ -702,7 +702,6 @@ class ChessApp:
         self.game_over = True
         outcome = self.board.outcome()
         if outcome is None:
-            self.status_msg = "Game over"
             return
         if outcome.winner is None:
             if self.board.is_repetition(3):
