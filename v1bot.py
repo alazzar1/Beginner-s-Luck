@@ -22,18 +22,21 @@ transposition_table = {}
 # -- Main Functions ------------------------------------------------------------------
 def get_move(board: chess.Board) -> chess.Move:
     #Find the best move to take based on a simple material evaluation
-    max_depth = 6  # Look <max_depth> plies ahead
+    max_depth = 5  # Look <max_depth> plies ahead
     if is_endgame(board):
         max_depth = 8  # Look deeper in endgame
     best_move = None
     
     # Evaluate each legal move using minimax and choose the best one
     for depth in range(1, max_depth + 1):
-        best_move = get_move_at_depth(board, depth, hint=best_move)
+        if depth == max_depth:
+            best_move = get_move_at_depth(board, depth, hint=best_move, last_search=True)
+        else:
+            best_move = get_move_at_depth(board, depth, hint=best_move, last_search=False)
             
     return best_move
 
-def get_move_at_depth(board: chess.Board, depth: int, hint: chess.Move = None) -> chess.Move:
+def get_move_at_depth(board: chess.Board, depth: int, hint: chess.Move = None, last_search: bool = False) -> chess.Move:
     # Get the best move at a specific depth
     best_move = None
     best_value = float('-inf') if board.turn == chess.WHITE else float('inf')
@@ -46,7 +49,7 @@ def get_move_at_depth(board: chess.Board, depth: int, hint: chess.Move = None) -
         moves = [hint] + [move for move in moves if move != hint]
     for move in moves:
         board.push(move)
-        value = minimax(board, depth - 1, alpha, beta)  # Look <depth> plies ahead
+        value = minimax(board, depth - 1, alpha, beta, last_search)  # Look <depth> plies ahead
         board.pop()
         
         # For white, maximize the value; for black, minimize it
@@ -71,8 +74,14 @@ def get_difference(board: chess.Board) -> int:
         value -= len(board.pieces(piece_type, chess.BLACK)) * PIECE_VALUES[piece_type]
     return value
 
-def minimax(board: chess.Board, depth: int, alpha: int, beta: int) -> int:
+def minimax(board: chess.Board, depth: int, alpha: int, beta: int, last_search: bool = False) -> int:
     # Minimax algorithm to evaluate the position after <depth> moves
+    # Base case: if gameover, return the winner or draw
+    if not any(board.legal_moves):
+        return result_eval(board)
+    elif board.is_repetition(3):
+        return 0
+
     alpha_orig = alpha  # Save original alpha to determine flag at the end
     beta_orig = beta  # Save original beta to determine flag at the end
 
@@ -88,14 +97,13 @@ def minimax(board: chess.Board, depth: int, alpha: int, beta: int) -> int:
             beta = min(beta, score)
         if alpha >= beta:
             return score
-
-    # Base case: if depth is 0 or gameover, return the material difference
+        
+    # After transposition table lookup, check if the search should be terminated
     if depth == 0:
-        return quiescence(board, alpha, beta)
-    elif not any(board.legal_moves):
-        return result_eval(board)
-    elif board.is_repetition(3):
-        return 0
+        if last_search:
+            return quiescence(board, alpha, beta)
+        else:
+            return get_difference(board)
 
     ordered_moves = order_moves(board)
 
@@ -105,7 +113,7 @@ def minimax(board: chess.Board, depth: int, alpha: int, beta: int) -> int:
         # Evaluate each move and update the maximum evaluation
         for move in ordered_moves:
             board.push(move)
-            eval = minimax(board, depth - 1, alpha, beta)
+            eval = minimax(board, depth - 1, alpha, beta, last_search)
             board.pop()
             max_eval = max(max_eval, eval)
             alpha = max(alpha, max_eval)
@@ -127,7 +135,7 @@ def minimax(board: chess.Board, depth: int, alpha: int, beta: int) -> int:
         # Evaluate each move and update the minimum evaluation
         for move in ordered_moves:
             board.push(move)
-            eval = minimax(board, depth - 1, alpha, beta)
+            eval = minimax(board, depth - 1, alpha, beta, last_search)
             board.pop()
             min_eval = min(min_eval, eval)
             beta = min(beta, min_eval)
