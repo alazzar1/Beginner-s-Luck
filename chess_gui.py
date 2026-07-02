@@ -605,8 +605,21 @@ class ChessApp:
         move = chess.Move(from_sq, to_sq)
         piece = self.board.piece_at(from_sq)
         if (piece and piece.piece_type == chess.PAWN and
-                chess.square_rank(to_sq) in (0, 7)):
-            move = chess.Move(from_sq, to_sq, promotion=chess.QUEEN)
+            chess.square_rank(to_sq) in (0, 7)):
+            self.draw_promotion_palette(from_sq, to_sq)
+            pygame.display.flip()   # <-- critical: main loop won't flip for you here
+
+            promotion_piece = None
+            while promotion_piece is None:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        pygame.quit()
+                        sys.exit()
+                    elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        promotion_piece = self.handle_promotion_click(event.pos)
+                self.clock.tick(30)
+
+            move = chess.Move(from_sq, to_sq, promotion=promotion_piece)
 
         # Check if the move is legal, and if so, execute it
         # if not, display an error message
@@ -628,6 +641,59 @@ class ChessApp:
                 self.status_msg = "Bot thinking…"
                 self.bot_delay  = 100   # ms
 
+    def draw_promotion_palette(self, from_sq, to_sq):
+        # Draw the promotion palette
+        px = BOARD_SIZE
+        h = self.heading_font.render("Select a Piece", True, TEXT_GRAY)
+        self.screen.blit(h, (px + 12, 84))
+ 
+        # Set the order of pieces for promotion and the color based on the current turn
+        piece_order = [chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT]
+        if self.board.turn == chess.WHITE:
+            color = chess.WHITE
+        else:
+            color = chess.BLACK
+ 
+        # Set the dimensions and starting position for the palette
+        cell = 50
+        gap  = 8
+        start_y = 110
+        self.palette_rects = {}  # selection_key -> rect
+ 
+        # Draw the piece palette
+        for row_i, piece_type in enumerate(piece_order):
+            col_x = px + 16 + (cell + gap)
+            label = "Select a Piece to Promote"
+            lbl = self.label_font.render(label, True, TEXT_GRAY)
+            self.screen.blit(lbl, (col_x, start_y - 18))
+ 
+            # Draw the pieces
+            y = start_y + row_i * (cell + gap)
+            rect = pygame.Rect(col_x, y, cell, cell)
+ 
+            # Draw the piece
+            key = (piece_type, color)
+            bg = ACCENT
+            pygame.draw.rect(self.screen, bg, rect, border_radius=8)
+ 
+            # Render the piece symbol
+            sym = PIECE_SYMBOLS[(piece_type, color)]
+            fcolor = (255, 255, 255) if color == chess.WHITE else (25, 25, 25)
+            surf = self.piece_font.render(sym, True, fcolor)
+            r = surf.get_rect(center=rect.center)
+            self.screen.blit(surf, r)
+ 
+            self.palette_rects[key] = rect
+
+    def handle_promotion_click(self, pos) -> chess.PieceType:
+        # Handle clicks on the promotion palette
+        for key, rect in getattr(self, "palette_rects", {}).items():
+            if rect.collidepoint(pos):
+                piece_type, color = key
+                return piece_type
+        return None
+        
+    
     def load_bot(self):
         # Open file picker without showing a tkinter window
         root = tk.Tk()

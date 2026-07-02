@@ -38,10 +38,11 @@ def get_move(board: chess.Board) -> chess.Move:
 
 def get_move_at_depth(board: chess.Board, depth: int, hint: chess.Move = None, last_search: bool = False) -> chess.Move:
     # Get the best move at a specific depth
-    best_move = None
-    best_value = float('-inf') if board.turn == chess.WHITE else float('inf')
+    # Initialize limits and trackers
     alpha = float('-inf')
     beta = float('inf')
+    best_move = None
+    best_value = float('-inf') if board.turn == chess.WHITE else float('inf')
     moves = order_moves(board)
 
     # Search previous best move first
@@ -54,12 +55,12 @@ def get_move_at_depth(board: chess.Board, depth: int, hint: chess.Move = None, l
         
         # For white, maximize the value; for black, minimize it
         if board.turn == chess.WHITE:
-            if value > best_value:
+            if value > best_value or best_move is None:
                 best_value = value
                 best_move = move
             alpha = max(alpha, best_value)
         else:
-            if value < best_value:
+            if value < best_value or best_move is None:
                 best_value = value
                 best_move = move
             beta = min(beta, best_value)
